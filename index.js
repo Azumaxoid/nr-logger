@@ -1,17 +1,63 @@
 const express = require('express')
     , app = express()
     , axios = require('axios')
+    , AWS = require('aws-sdk')
+
+AWS.config.loadFromPath('./awsconfig.json');
+var sns = new AWS.SNS({apiVersion: '2010-03-31'});
 
 app.use(express.json({ extended: true, limit: '512mb' }))
 app.use(express.urlencoded({ extended: true }));
+app.use(express.text({ extended: true, limit: '512mb' }));
 
 const NR_INSERT_KEY=process.env.NR_INSERT_KEY;
+const SNS_TOPIC=process.env.SNS_TOPIC;
+const ENDPOINT=process.env.ENDPOINT;
 const PAYLOAD_SIZE=20;
+
+function initSubscriber(callback) {
+    var args = {
+        TopicArn: SNS_TOPIC,
+	Protocol: 'http',
+	Endpoint: ENDPOINT
+    };
+    console.log(args);
+    sns.subscribe(args).promise().then((err, data) =>{
+        console.log("subscribe start.");
+        console.log(data);
+        callback(null, 3);
+    }).catch((err)=>{
+      console.error(err, err.stack);
+    });
+}
+initSubscriber(()=>{});
 app.post('/nrlogs', function (req, res) {
-    var events = req.body;
+    //initSubscriber(()=>{});
+    var body = JSON.parse(req.body);
+    console.log(req.headers);
+    console.log(body);
+    if (req.headers['x-amz-sns-message-type'] === 'SubscriptionConfirmation') {
+        sns.confirmSubscription({
+            TopicArn: req.headers['x-amz-sns-topic-arn'],
+            Token : body.Token
+        }, (err, r)=>{
+            console.log(err);
+            if(err){
+                return reject(err)
+            }
+            return res.json();
+        });
+	return;
+    }
+    var events = body;
+    if (!events.map) {
+	console.log('Skip request');
+	res.json({ status: "skipped" });
+	return;
+    }
         //timestamp: (new Date(event.LogDate)).getTime(),
     var logEvents = events.map(event => ({
-        timestamp: (new Date()).getTime(),
+        timestamp: (new Date(event.LogDate)).getTime(),
         message: JSON.stringify(event),
         attributes: event
     }));
